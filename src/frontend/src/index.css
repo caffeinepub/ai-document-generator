@@ -1,0 +1,95 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("/assets/fonts/PlusJakartaSans.woff2") format("woff2");
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer base {
+  :root {
+    --radius: 0.5rem;
+
+    /* Page background: #F6F7FB ~ very light grayish blue */
+    --background: 0.975 0.006 240;
+    /* Card/sidebar: white */
+    --card: 1 0 0;
+    --card-foreground: 0.16 0.01 260;
+    --popover: 1 0 0;
+    --popover-foreground: 0.16 0.01 260;
+
+    /* Sidebar */
+    --sidebar: 1 0 0;
+    --sidebar-foreground: 0.16 0.01 260;
+    --sidebar-primary: 0.52 0.22 264;
+    --sidebar-primary-foreground: 1 0 0;
+    --sidebar-accent: 0.965 0.015 240;
+    --sidebar-accent-foreground: 0.52 0.22 264;
+    --sidebar-border: 0.92 0.008 240;
+    --sidebar-ring: 0.52 0.22 264;
+
+    /* Primary text: #111827 */
+    --foreground: 0.16 0.01 260;
+
+    /* Primary accent: #2563EB */
+    --primary: 0.52 0.22 264;
+    --primary-foreground: 1 0 0;
+
+    /* Secondary */
+    --secondary: 0.96 0.008 240;
+    --secondary-foreground: 0.16 0.01 260;
+
+    /* Muted / labels: #6B7280 */
+    --muted: 0.965 0.006 240;
+    --muted-foreground: 0.52 0.015 264;
+
+    /* Accent (hover state: #EFF6FF) */
+    --accent: 0.965 0.018 240;
+    --accent-foreground: 0.52 0.22 264;
+
+    /* Destructive */
+    --destructive: 0.577 0.245 27.325;
+    --destructive-foreground: 1 0 0;
+
+    /* Border: #E5E7EB */
+    --border: 0.92 0.008 240;
+    --input: 0.92 0.008 240;
+    --ring: 0.52 0.22 264;
+
+    /* Charts */
+    --chart-1: 0.52 0.22 264;
+    --chart-2: 0.6 0.118 184.704;
+    --chart-3: 0.398 0.07 227.392;
+    --chart-4: 0.828 0.189 84.429;
+    --chart-5: 0.769 0.188 70.08;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+  }
+}
+
+/* Document preview typography */
+.doc-preview {
+  font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Contenteditable placeholder */
+[contenteditable][data-placeholder]:empty::before {
+  content: attr(data-placeholder);
+  color: oklch(var(--muted-foreground) / 0.5);
+  pointer-events: none;
+  white-space: pre;
+}
