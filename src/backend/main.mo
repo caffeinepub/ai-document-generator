@@ -20,6 +20,21 @@ actor {
     Outcall.transform(input);
   };
 
+  func jsonEscape(s : Text) : Text {
+    var result = "";
+    for (c in s.chars()) {
+      switch (c) {
+        case '\u{22}' { result := result # "\\\"" };
+        case '\u{5C}' { result := result # "\\\\" };
+        case '\n' { result := result # "\\n" };
+        case '\r' { result := result # "\\r" };
+        case '\t' { result := result # "\\t" };
+        case _ { result := result # Text.fromChar(c) };
+      };
+    };
+    result;
+  };
+
   public func generateDocument(docType : Text, prompt : Text, additionalContent : Text, outputFormat : Text) : async Text {
     let formatInstruction = switch (outputFormat) {
       case ("Markdown") "Format the output using Markdown (headers, bold, lists, etc).";
@@ -31,20 +46,15 @@ actor {
     let systemContent = "You are a professional document writer. Generate well-structured, formal documents based on the user specifications. Format the document appropriately for its type, including proper headings, sections, and professional language. Output only the document content itself, no explanations.";
     let userContent = "Document Type: " # docType # ". Instructions: " # prompt # ". Additional Content: " # additionalContent # ". " # formatInstruction;
 
-    let escapedSystem = systemContent.replace(#text "\"", "\\\"");
-    let escapedUser = userContent.replace(#text "\"", "\\\"");
-    let escapedUser2 = escapedUser.replace(#text "\n", " ");
-
-    let body = "{\"model\":\"openai\",\"messages\":[{\"role\":\"system\",\"content\":\"" # escapedSystem # "\"},{\"role\":\"user\",\"content\":\"" # escapedUser2 # "\"}]}";
+    let body = "{\"model\":\"openai\",\"messages\":[{\"role\":\"system\",\"content\":\"" # jsonEscape(systemContent) # "\"},{\"role\":\"user\",\"content\":\"" # jsonEscape(userContent) # "\"}]}";
 
     let result = await Outcall.httpPostRequest(
-      "https://text.pollinations.ai/",
+      "https://text.pollinations.ai/openai",
       [{ name = "Content-Type"; value = "application/json" }],
       body,
       transform,
     );
 
-    // Save to history
     let entry : HistoryEntry = {
       id = nextId;
       docType = docType;

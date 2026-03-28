@@ -39,6 +39,12 @@ import { toast } from "sonner";
 // Paper sizes
 // ---------------------------------------------------------------------------
 type PaperSize = "a4" | "letter" | "legal" | "a3";
+type SceneBackground = "none" | "desk" | "bed" | "rug";
+const SCENE_BG_PATHS: Record<Exclude<SceneBackground, "none">, string> = {
+  desk: "/assets/generated/bg-desk.dim_1200x900.jpg",
+  bed: "/assets/generated/bg-bed.dim_1200x900.jpg",
+  rug: "/assets/generated/bg-rug.dim_1200x900.jpg",
+};
 const PAPER_SIZES: Record<PaperSize, { label: string; w: number; h: number }> =
   {
     a4: { label: "A4", w: 794, h: 1123 },
@@ -801,6 +807,46 @@ function exportToCanvas(
   return canvas;
 }
 
+async function exportToCanvasWithScene(
+  docLines: DocLine[],
+  docType: DocType,
+  paperSize: PaperSize,
+  scene: SceneBackground,
+): Promise<HTMLCanvasElement> {
+  const docCanvas = exportToCanvas(docLines, docType, paperSize);
+  if (scene === "none") return docCanvas;
+  const bgPath = SCENE_BG_PATHS[scene];
+  const bgImg = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = bgPath;
+  });
+  const pad = 220;
+  const compositeW = docCanvas.width + pad * 2;
+  const compositeH = docCanvas.height + pad * 2;
+  const composite = document.createElement("canvas");
+  composite.width = compositeW;
+  composite.height = compositeH;
+  const ctx = composite.getContext("2d")!;
+  ctx.drawImage(bgImg, 0, 0, compositeW, compositeH);
+  const angle = (Math.random() * 4 - 2) * (Math.PI / 180);
+  const cx = compositeW / 2;
+  const cy = compositeH / 2;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+  ctx.shadowBlur = 40;
+  ctx.shadowColor = "rgba(0,0,0,0.35)";
+  ctx.shadowOffsetX = 8;
+  ctx.shadowOffsetY = 12;
+  ctx.drawImage(docCanvas, -docCanvas.width / 2, -docCanvas.height / 2);
+  ctx.shadowBlur = 0;
+  ctx.shadowColor = "transparent";
+  ctx.restore();
+  return composite;
+}
+
 // ---------------------------------------------------------------------------
 // Live preview renderer
 // ---------------------------------------------------------------------------
@@ -1226,6 +1272,8 @@ export default function App() {
   const [isSaving, setIsSaving] = useState(false);
   const [isStructuring, setIsStructuring] = useState(false);
   const [paperSize, setPaperSize] = useState<PaperSize>("a4");
+  const [sceneBackground, setSceneBackground] =
+    useState<SceneBackground>("desk");
   const editorRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const { actor } = useActor();
@@ -1244,14 +1292,30 @@ export default function App() {
   const isEmpty = editorHtml.replace(/<[^>]*>/g, "").trim() === "";
 
   const getPlainText = useCallback(() => {
-    return editorHtml.replace(/<[^>]*>/g, "");
+    const tempDiv = document.createElement("div");
+    tempDiv.innerHTML = editorHtml;
+    // Walk each block-level child to preserve line breaks
+    const lines: string[] = [];
+    for (const child of Array.from(tempDiv.childNodes)) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        lines.push(child.textContent || "");
+      } else {
+        lines.push((child as HTMLElement).innerText ?? child.textContent ?? "");
+      }
+    }
+    return lines.join("\n");
   }, [editorHtml]);
 
   const handleSaveAsImage = useCallback(async () => {
     if (isEmpty) return;
     setIsSaving(true);
     try {
-      const canvas = exportToCanvas(docLines, docType, paperSize);
+      const canvas = await exportToCanvasWithScene(
+        docLines,
+        docType,
+        paperSize,
+        sceneBackground,
+      );
       canvas.toBlob((blob) => {
         if (!blob) {
           toast.error("Failed to create image.");
@@ -1270,29 +1334,61 @@ export default function App() {
     } finally {
       setIsSaving(false);
     }
-  }, [docLines, docType, isEmpty, paperSize]);
+  }, [docLines, docType, isEmpty, paperSize, sceneBackground]);
 
   const handleAiStructure = useCallback(async () => {
     if (!actor || isEmpty || isStructuring) return;
     setIsStructuring(true);
     try {
-      const plainText = getPlainText();
+      let plainText = getPlainText();
+      if (plainText.length > 2500) {
+        toast.warning(
+          "Document is long; only the first 2500 characters will be structured.",
+        );
+        plainText = plainText.slice(0, 2500);
+      }
+
+      // Extract the document heading (first non-empty line)
+      const firstLine =
+        plainText.split("\n").find((l) => l.trim().length > 0) ?? "";
+      const structurePrompt = `The document heading is: "${firstLine}". Based on this heading, identify the exact type of legal/professional document this is. Then rewrite the full document below in the correct professional structure for that document type, with all required sections in the proper real-world order (e.g. for a Will: Declaration, Revocation, Beneficiaries, Specific Bequests, Residuary Estate, Executor, Guardianship if applicable, Signatures). Use proper headings and formal language throughout. Preserve all names, dates, and specific details from the original text. Output ONLY the final document — no explanations, no preamble.`;
+
       const result = await (actor as any).generateDocument(
         "auto",
-        "Detect the document type from the heading and content of the following text. Then restructure and rewrite it as a properly formatted professional document of that type, with all standard sections in the correct professional order, appropriate headings, and formal language as a human professional would type it. Output only the final structured document, no explanations or preamble.",
+        structurePrompt,
         plainText,
         "Formal / Structured",
       );
+
+      // Pollinations.ai may return OpenAI-format JSON or plain text — handle both
+      const rawResult =
+        typeof result === "string"
+          ? result
+          : Array.isArray(result) && result.length > 0
+            ? (result[0] as string)
+            : result && typeof result === "object" && "ok" in result
+              ? (result as { ok: string }).ok
+              : null;
+
       let structured: string | null = null;
-      if (typeof result === "string") {
-        structured = result;
-      } else if (Array.isArray(result) && result.length > 0) {
-        structured = result[0] as string;
-      } else if (result && typeof result === "object" && "ok" in result) {
-        structured = (result as { ok: string }).ok;
+      if (rawResult) {
+        try {
+          const parsed = JSON.parse(rawResult);
+          const content = parsed?.choices?.[0]?.message?.content;
+          if (typeof content === "string" && content.trim().length > 0) {
+            structured = content;
+          }
+        } catch {
+          // not JSON — use as plain text
+        }
+        if (!structured) structured = rawResult;
       }
-      if (structured && structured.trim().length > 0) {
-        // Convert plain text to HTML
+
+      if (
+        structured &&
+        structured.trim().length > 0 &&
+        !structured.toLowerCase().startsWith("error")
+      ) {
         const newHtml = structured
           .split("\n")
           .map((line) => `<div>${line || "<br>"}</div>`)
@@ -1302,11 +1398,15 @@ export default function App() {
         }
         setEditorHtml(newHtml);
         toast.success("Document structured successfully!");
+      } else if (structured?.toLowerCase().startsWith("error")) {
+        toast.error(`AI Structure failed: ${structured}`);
       } else {
         toast.error("AI returned an empty response. Please try again.");
       }
-    } catch (_err) {
-      toast.error("Failed to structure document. Please try again.");
+    } catch (err) {
+      toast.error(
+        `AI Structure failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     } finally {
       setIsStructuring(false);
     }
@@ -1467,36 +1567,34 @@ export default function App() {
               {/* Formatting toolbar */}
               <FormattingToolbar editorRef={editorRef} />
 
-              <ScrollArea className="flex-1">
-                <div className="p-4">
-                  <div
-                    ref={editorRef}
-                    data-ocid="doc.text.editor"
-                    contentEditable
-                    suppressContentEditableWarning
-                    onInput={() => {
+              <div className="flex-1 overflow-y-auto p-4">
+                <div
+                  ref={editorRef}
+                  data-ocid="doc.text.editor"
+                  contentEditable
+                  suppressContentEditableWarning
+                  onInput={() => {
+                    if (editorRef.current) {
+                      setEditorHtml(editorRef.current.innerHTML);
+                    }
+                  }}
+                  onPaste={(_e) => {
+                    // On paste, allow default but then sync
+                    setTimeout(() => {
                       if (editorRef.current) {
                         setEditorHtml(editorRef.current.innerHTML);
                       }
-                    }}
-                    onPaste={(_e) => {
-                      // On paste, allow default but then sync
-                      setTimeout(() => {
-                        if (editorRef.current) {
-                          setEditorHtml(editorRef.current.innerHTML);
-                        }
-                      }, 0);
-                    }}
-                    className="text-sm font-mono leading-relaxed w-full outline-none border border-input rounded-md px-3 py-2 bg-background text-foreground focus:ring-1 focus:ring-ring"
-                    style={{
-                      minHeight: "500px",
-                      whiteSpace: "pre-wrap",
-                      wordBreak: "break-word",
-                    }}
-                    data-placeholder="Paste your document text here...\n\nExample:\n\nCONTRACT AGREEMENT\n\nParties:\n  John Smith (Client)\n  Acme Corp (Service Provider)"
-                  />
-                </div>
-              </ScrollArea>
+                    }, 0);
+                  }}
+                  className="text-sm font-mono leading-relaxed w-full outline-none border border-input rounded-md px-3 py-2 bg-background text-foreground focus:ring-1 focus:ring-ring"
+                  style={{
+                    minHeight: "500px",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                  data-placeholder="Paste your document text here...\n\nExample:\n\nCONTRACT AGREEMENT\n\nParties:\n  John Smith (Client)\n  Acme Corp (Service Provider)"
+                />
+              </div>
 
               {/* Paper size selector */}
               <div className="px-4 pb-3">
@@ -1524,6 +1622,40 @@ export default function App() {
                         {PAPER_SIZES[key].h}px)
                       </SelectItem>
                     ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Scene background selector */}
+              <div className="px-4 pb-3">
+                <Label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 block">
+                  Save Background
+                </Label>
+                <Select
+                  value={sceneBackground}
+                  onValueChange={(v) =>
+                    setSceneBackground(v as SceneBackground)
+                  }
+                >
+                  <SelectTrigger
+                    data-ocid="doc.scene_background.select"
+                    className="h-8 text-xs"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none" className="text-xs">
+                      None (Plain White)
+                    </SelectItem>
+                    <SelectItem value="desk" className="text-xs">
+                      Office Desk
+                    </SelectItem>
+                    <SelectItem value="bed" className="text-xs">
+                      Bed
+                    </SelectItem>
+                    <SelectItem value="rug" className="text-xs">
+                      Rug
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
